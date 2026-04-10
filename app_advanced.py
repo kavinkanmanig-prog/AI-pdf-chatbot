@@ -1,18 +1,25 @@
 import streamlit as st
 from pypdf import PdfReader
-
 from langchain_text_splitters import CharacterTextSplitter
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
 from langchain_community.llms import Ollama
 
-# 🎨 PAGE CONFIG
+# PAGE CONFIG
 st.set_page_config(page_title="🔥 AI PDF Chatbot", layout="wide")
-
-# 🌙 SIMPLE PREMIUM TITLE
 st.markdown("<h1 style='color:#00FFD1;'>🤖 AI PDF Chatbot (Fast + AI)</h1>", unsafe_allow_html=True)
 
-# ✅ CACHE PDF PROCESSING (VERY IMPORTANT)
+
+@st.cache_resource
+def load_embeddings():
+    return HuggingFaceEmbeddings()
+
+
+@st.cache_resource
+def load_llm():
+    return Ollama(model="phi")
+
+
 @st.cache_resource
 def process_pdf(file):
     reader = PdfReader(file)
@@ -23,42 +30,37 @@ def process_pdf(file):
         if extracted:
             text += extracted
 
-    # ✂️ Split text
     splitter = CharacterTextSplitter(
-        chunk_size=400,
-        chunk_overlap=80
+        chunk_size=800,
+        chunk_overlap=100
     )
     chunks = splitter.split_text(text)
 
-    # 🧠 Embeddings + DB
-    embeddings = HuggingFaceEmbeddings()
+    embeddings = load_embeddings()
     db = FAISS.from_texts(chunks, embeddings)
-
     return db
 
-# 📄 FILE UPLOAD
+
 uploaded_file = st.file_uploader("📄 Upload your PDF", type="pdf")
 
 if uploaded_file:
-    st.info("⏳ Processing PDF... please wait")
-
-    db = process_pdf(uploaded_file)
+    if "db" not in st.session_state or st.session_state.get("last_file") != uploaded_file.name:
+        st.info("⏳ Processing PDF... please wait")
+        st.session_state.db = process_pdf(uploaded_file)
+        st.session_state.last_file = uploaded_file.name
 
     st.success("✅ PDF Ready! Ask your question below")
 
-    # ⚡ FAST MODEL (STEP 2 INCLUDED)
-    llm = Ollama(model="phi")
+    llm = load_llm()
+    db = st.session_state.db
 
-    # 💬 CHAT MEMORY
     if "messages" not in st.session_state:
         st.session_state.messages = []
 
-    # SHOW CHAT HISTORY
     for msg in st.session_state.messages:
         with st.chat_message(msg["role"]):
             st.write(msg["content"])
 
-    # USER INPUT
     query = st.chat_input("💬 Ask something about your PDF...")
 
     if query:
@@ -70,11 +72,9 @@ if uploaded_file:
         with st.chat_message("user"):
             st.write(query)
 
-        # 🔍 RETRIEVE CONTEXT (STEP 3 OPTIMIZED)
         docs = db.similarity_search(query, k=2)
-        context = " ".join([doc.page_content for doc in docs])
+        context = " ".join([doc.page_content[:1000] for doc in docs])
 
-        # 🧠 PROMPT
         prompt = f"""
         Answer clearly using only the context below.
 
@@ -85,7 +85,6 @@ if uploaded_file:
         {query}
         """
 
-        # 🤖 AI RESPONSE
         response = llm.invoke(prompt)
 
         st.session_state.messages.append({
